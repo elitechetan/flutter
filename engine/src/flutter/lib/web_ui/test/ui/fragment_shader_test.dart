@@ -329,6 +329,47 @@ const String kManyArraysSksl = r'''
 // Simple shader with a float uniform
 // Generated from engine/src/flutter/lib/ui/fixtures/shaders/uniforms/float_uniform.frag
 // For changes, update that file and regenerate using impellerc.
+// Fragment shader with two samplers and a float uniform declared between them,
+// so sampler indices differ from uniform positions.
+const kTwoSamplersShaderSksl = r'''
+{
+  "format_version": 1,
+  "sksl": {
+    "entrypoint": "two_samplers_fragment_main",
+    "shader": "uniform vec2 u_mix;\nuniform shader u_a;\nuniform shader u_b;\nuniform half2 u_a_size;\nuniform half2 u_b_size;\n\nhalf4 main(float2 iFragCoord)\n{\n    return mix(u_a.eval(iFragCoord), u_b.eval(iFragCoord), half(u_mix.x));\n}\n",
+    "stage": 1,
+    "uniforms": [
+      {
+        "array_elements": 0,
+        "bit_width": 0,
+        "columns": 1,
+        "location": 0,
+        "name": "u_a",
+        "rows": 1,
+        "type": 12
+      },
+      {
+        "array_elements": 0,
+        "bit_width": 32,
+        "columns": 1,
+        "location": 1,
+        "name": "u_mix",
+        "rows": 2,
+        "type": 10
+      },
+      {
+        "array_elements": 0,
+        "bit_width": 0,
+        "columns": 1,
+        "location": 2,
+        "name": "u_b",
+        "rows": 1,
+        "type": 12
+      }
+    ]
+  }
+}''';
+
 const String kFloatSkSl = r'''
 {
   "format_version": 2,
@@ -843,6 +884,10 @@ Future<void> testMain() async {
     assetScope = fakeAssetManager.pushAssetScope();
     assetScope.setAsset('voronoi_shader', ByteData.sublistView(utf8.encode(kVoronoiShaderSksl)));
     assetScope.setAsset('texture_shader', ByteData.sublistView(utf8.encode(kTextureShaderSksl)));
+    assetScope.setAsset(
+      'two_samplers_shader',
+      ByteData.sublistView(utf8.encode(kTwoSamplersShaderSksl)),
+    );
     assetScope.setAsset('many_arrays', ByteData.sublistView(utf8.encode(kManyArraysSksl)));
     assetScope.setAsset('ink_sparkle', ByteData.sublistView(utf8.encode(kInkSparkleSksl)));
     assetScope.setAsset('float_uniform', ByteData.sublistView(utf8.encode(kFloatSkSl)));
@@ -962,6 +1007,108 @@ Future<void> testMain() async {
   test('fragment shader with space in name loads correctly', () async {
     assetScope.setAsset('voronoi%20shader', ByteData.sublistView(utf8.encode(kVoronoiShaderSksl)));
     await expectLater(ui.FragmentProgram.fromAsset('voronoi shader'), completes);
+  }, skip: isWimp); // https://github.com/flutter/flutter/issues/175431
+
+  // Regression tests for https://github.com/flutter/flutter/issues/194290.
+  group('getImageSampler', () {
+    test('returns a slot for the named sampler', () async {
+      final ui.FragmentProgram program = await renderer.createFragmentProgram('texture_shader');
+      final ui.FragmentShader shader = program.fragmentShader();
+
+      final ui.ImageSamplerSlot slot = shader.getImageSampler('u_texture');
+      expect(slot.name, 'u_texture');
+      expect(slot.shaderIndex, 0);
+      shader.dispose();
+    });
+
+    test('indexes samplers by sampler order, not uniform order', () async {
+      final ui.FragmentProgram program = await renderer.createFragmentProgram(
+        'two_samplers_shader',
+      );
+      final ui.FragmentShader shader = program.fragmentShader();
+
+      expect(shader.getImageSampler('u_a').shaderIndex, 0);
+      expect(shader.getImageSampler('u_b').shaderIndex, 1);
+      shader.dispose();
+    });
+
+    test('throws for an unknown uniform', () async {
+      final ui.FragmentProgram program = await renderer.createFragmentProgram('texture_shader');
+      final ui.FragmentShader shader = program.fragmentShader();
+
+      expect(
+        () => shader.getImageSampler('unknown'),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError e) => e.message,
+            'message',
+            'No uniform named "unknown".',
+          ),
+        ),
+      );
+      shader.dispose();
+    });
+
+    test('throws for a uniform that is not a sampler', () async {
+      final ui.FragmentProgram program = await renderer.createFragmentProgram('texture_shader');
+      final ui.FragmentShader shader = program.fragmentShader();
+
+      expect(
+        () => shader.getImageSampler('u_size'),
+        throwsA(
+          isA<ArgumentError>().having(
+            (ArgumentError e) => e.message,
+            'message',
+            'Uniform "u_size" is not an image sampler.',
+          ),
+        ),
+      );
+      shader.dispose();
+    });
+
+    test('set tracks the image like setImageSampler', () async {
+      final ui.FragmentProgram program = await renderer.createFragmentProgram(
+        'two_samplers_shader',
+      );
+      final shader = program.fragmentShader() as EngineFragmentShader;
+      final ui.Image image = _createOvalGradientImage(imageDimension: 16);
+
+      shader.getImageSampler('u_b').set(image);
+      expect(shader.samplerImages, <ui.Image>[image]);
+      expect(shader.debugImageSamplers.keys, <int>[1]);
+
+      shader.dispose();
+      expect(shader.debugImageSamplers, isEmpty);
+      image.dispose();
+    });
+
+    test('renders the same as setImageSampler', () async {
+      final ui.FragmentProgram program = await renderer.createFragmentProgram('texture_shader');
+      final ui.Image image = _createOvalGradientImage(imageDimension: 16);
+      const imageDimension = 100;
+
+      Future<ByteData> render(void Function(ui.FragmentShader shader) bindImage) async {
+        final ui.FragmentShader shader = program.fragmentShader();
+        shader.getUniformVec2('u_size').set(imageDimension.toDouble(), imageDimension.toDouble());
+        bindImage(shader);
+        final ByteData bytes = (await _imageByteDataFromShader(
+          shader: shader,
+          imageDimension: imageDimension,
+        ))!;
+        shader.dispose();
+        return bytes;
+      }
+
+      final ByteData expected = await render(
+        (ui.FragmentShader shader) => shader.setImageSampler(0, image),
+      );
+      final ByteData actual = await render(
+        (ui.FragmentShader shader) => shader.getImageSampler('u_texture').set(image),
+      );
+
+      expect(actual.buffer.asUint8List(), expected.buffer.asUint8List());
+      image.dispose();
+    });
   }, skip: isWimp); // https://github.com/flutter/flutter/issues/175431
 
   group('fragmentShader uniforms', () {
