@@ -408,7 +408,10 @@ class EngineFragmentShader extends EngineShader implements ui.FragmentShader {
   @override
   ui.UniformMat4Slot getUniformMat4(String name) => _backendShader.getUniformMat4(name);
   @override
-  ui.ImageSamplerSlot getImageSampler(String name) => _backendShader.getImageSampler(name);
+  ui.ImageSamplerSlot getImageSampler(String name) {
+    assert(!debugDisposed, 'Tried to access uniforms on a disposed Shader: $this');
+    return _EngineImageSamplerSlot(this, name, _backendShader.getImageSamplerIndex(name));
+  }
   @override
   ui.UniformArray<ui.UniformFloatSlot> getUniformFloatArray(String name) =>
       _backendShader.getUniformFloatArray(name);
@@ -430,4 +433,25 @@ class EngineFragmentShader extends EngineShader implements ui.FragmentShader {
   @override
   ui.UniformArray<ui.UniformMat4Slot> getUniformMat4Array(String name) =>
       _backendShader.getUniformMat4Array(name);
+}
+
+/// A binding to a [EngineFragmentShader]'s image sampler.
+///
+/// [set] goes through [EngineFragmentShader.setImageSampler] so the shader
+/// keeps track of the bound image and disposes of its backend sampler.
+class _EngineImageSamplerSlot implements ui.ImageSamplerSlot {
+  _EngineImageSamplerSlot(this._shader, this.name, this.shaderIndex);
+
+  final EngineFragmentShader _shader;
+
+  @override
+  final String name;
+
+  @override
+  final int shaderIndex;
+
+  @override
+  void set(ui.Image val) {
+    _shader.setImageSampler(shaderIndex, val);
+  }
 }

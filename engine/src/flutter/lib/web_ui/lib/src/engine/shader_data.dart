@@ -97,6 +97,30 @@ class ShaderData {
   int textureCount;
 }
 
+/// Returns the index of the image sampler uniform named [name], for use with
+/// `FragmentShader.setImageSampler`.
+///
+/// The index is the number of `SampledImage` uniforms declared before [name],
+/// matching `FragmentProgram._getImageSamplerIndex` in `dart:ui` on native.
+///
+/// Throws an [ArgumentError] if there is no uniform named [name], or if it is
+/// not an image sampler.
+int imageSamplerIndexOf(List<UniformData> uniforms, String name) {
+  var index = 0;
+  for (final UniformData uniform in uniforms) {
+    if (uniform.name == name) {
+      if (uniform.type != UniformType.SampledImage) {
+        throw ArgumentError('Uniform "$name" is not an image sampler.');
+      }
+      return index;
+    }
+    if (uniform.type == UniformType.SampledImage) {
+      index += 1;
+    }
+  }
+  throw ArgumentError('No uniform named "$name".');
+}
+
 class UniformData {
   const UniformData({
     required this.name,

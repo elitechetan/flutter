@@ -312,9 +312,7 @@ class CkFragmentShader extends BackendFragmentShader implements CkShader {
   }
 
   @override
-  ui.ImageSamplerSlot getImageSampler(String name) {
-    throw UnsupportedError('getImageSampler is not supported on the web.');
-  }
+  int getImageSamplerIndex(String name) => imageSamplerIndexOf(_program.uniforms, name);
 
   List<CkUniformFloatSlot> _getUniformFloatSlots(String name, int size) {
     final UniformData info = _program._getUniformFloatInfo(name);
